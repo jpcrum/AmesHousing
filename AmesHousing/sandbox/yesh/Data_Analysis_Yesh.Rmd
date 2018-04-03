@@ -1,0 +1,91 @@
+---
+title: "Data_Analysis_Yesh"
+author: "Yeshwant Chillakuru"
+date: "4/27/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r loadData, message=FALSE}
+library(tidyverse)
+library(pls)
+library(stargazer)
+
+df_train <- read.csv("../train_housing.csv", header=TRUE)
+df_test <- read.csv("../test_housing.csv", header=TRUE)
+```
+
+# Remove all factor columns from data
+```{r factordrop}
+df_train_num <- df_train
+
+for(i in colnames(df_train)){
+  if(is.factor( df_train[[i]] )){
+    df_train_num[[i]] <- NULL
+  }
+}
+
+str(df_train_num)
+summary(df_train$saleprice)
+```
+
+
+# PCR Analysis
+
+## Model Selection
+```{r pcr1}
+
+pcr.saleprice <- pcr(saleprice ~ ., data=df_train_num, scale=TRUE, validation="CV")
+
+validationplot(pcr.saleprice)
+summary(pcr.saleprice)
+```
+
+We can see that 1 component explains about 76% of the variance in `saleprice`. This rises only marginally afterwards. The next big jump is from 6 to 7 components, and again from 23 to 24. 3 Models will be assessed with 1, 7, and 24 components.
+
+# Model Validation
+```{r modelvaldiation}
+
+pcr.predict.1 <- predict(pcr.saleprice, df_test, ncomp=1)
+df_predict.1 <- data.frame(pcr.predict.1, df_test$saleprice)
+saleprice_MSE.1 <- mean((df_predict.1[,1]-df_predict.1[,2])^2)
+saleprice_RMSE.1 <- sqrt(saleprice_MSE.1)
+
+pcr.predict.2 <- predict(pcr.saleprice, df_test, ncomp=7)
+df_predict.2 <- data.frame(pcr.predict.2, df_test$saleprice)
+saleprice_MSE.2 <- mean((df_predict.2[,1]-df_predict.2[,2])^2)
+saleprice_RMSE.2 <- sqrt(saleprice_MSE.2)
+
+pcr.predict.3 <- predict(pcr.saleprice, df_test, ncomp=24)
+df_predict.3 <- data.frame(pcr.predict.3, df_test$saleprice)
+saleprice_MSE.3 <- mean((df_predict.3[,1]-df_predict.3[,2])^2)
+saleprice_RMSE.3 <- sqrt(saleprice_MSE.3)
+
+stargazer(df_predict.1, df_predict.2, df_predict.3, type="text")
+```
+
+Comparing the 3 Models, we see the following RMSE Values:
+
+  * Model 1 (1 Component): `r paste(round(saleprice_RMSE.1))`
+  * Model 2 (7 Component): `r paste(round(saleprice_RMSE.2))`
+  * Model 3 (24 Component): `r paste(round(saleprice_RMSE.3))`
+
+Model 2 appears to be the best, as Model 3 risks overfitting for not a not much better fit.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

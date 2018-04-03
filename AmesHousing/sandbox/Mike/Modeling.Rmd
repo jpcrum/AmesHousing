@@ -1,0 +1,304 @@
+---
+title: "Modeling"
+author: "Michael Arango"
+date: "4/27/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Importing and Data Pre-processing
+
+### Import libraries and data
+
+```{r init, message = FALSE}
+# read in libraries
+library(tidyverse)
+library(caret)
+# read in train and test data
+training <- read.csv("train_housing.csv", stringsAsFactors = TRUE)
+test <- read.csv("test_housing.csv")
+```
+
+Since we split our data up into train and test sets after cleaning, all we need to do is pre-process and start modeling. 
+
+### Pre-process
+```{r preprocess}
+# make a dataframe of all numeric features
+num_features = names(which(sapply(training, is.numeric)))
+df.numeric = training[num_features]
+# make a dataframe of all categorical features
+cat_features = names(which(sapply(training, is.factor)))
+# convert all categorical features to numeric variables for modeling
+training[cat_features] <- sapply(training[cat_features], as.integer)
+test[cat_features] <- sapply(test[cat_features], as.integer)
+# split test into x and y
+test_x <- test %>% dplyr::select(-saleprice)
+test_y <- test %>% dplyr::select(saleprice)
+```
+
+Most machine learning models do better if we convert factors to integers when we run models, so we converted all categorical variables to integers. Then we created our own folds to be used in k-fold cross validation (with k = 5) so that we can compare the out-of-sample RMSE of our trained models on the same cross validation folds. This ensures we have an apples-to-apples comparison of our models. 
+
+```{r folds}
+# set seed for reproducibility
+set.seed(256)
+# create 5 folds to be used in cross validation
+myFolds <- createFolds(training, k = 5)
+# create a custom trainControl object to use our folds; index = myFolds
+myControl = trainControl(verboseIter = TRUE, index = myFolds)
+```
+
+In addition to making our own folds, we had to create a custom `trainControl` object so we can specify to use these folds. Now we are ready to model. 
+
+# Modeling
+
+## Random Forest Regression
+
+```{r rf1}
+set.seed(12)
+# train the model 
+modelrf1 <- train(
+  # formula
+  saleprice ~ .,
+  # data
+  training,
+  # fast random forest
+  method = "ranger",
+  # grid search for optimal number of columns to randomly sample at each split
+  tuneGrid = data.frame(mtry = seq(2, 80, 2)),
+  # set trainCrol as our custom object
+  trControl = myControl
+)
+# print the model
+print(modelrf1)
+# plot the number of randomly selected predictors
+plot(modelrf1)
+# print min RMSE from the model
+print(min(modelrf1$results[['RMSE']]))
+```
+
+We run a kitchen sink model (includes all independent variables) to start since random forest does its own feature selection. The optimal number of predictors at each split was 62. Next, we decided to remove the zero variance predictors before running the random forest regression. 
+
+```{r rf2}
+set.seed(1760)
+# train the model 
+modelrf2 <- train(
+  # formula
+  saleprice ~ .,
+  # data
+  training,
+  # fast random forest
+  method = "ranger",
+  # grid search for optimal number of columns to randomly sample at each split
+  tuneGrid = data.frame(mtry = seq(2, 40, 2)),
+  # preprocess by removing sero variance predictors
+  preProcess = "zv",
+  # set trainCrol as our custom object
+  trControl = myControl
+)
+# print the model summary
+print(modelrf2)
+# print results from the model
+print(min(modelrf2$results$RMSE))
+# plot RMSE 
+plot(modelrf2)
+# test
+varImp(modelrf2)
+```
+
+This actually made the model slightly worse.  To decrease dimensionality, we decided to drop near-zero variance predictors, center and scale all remaining variables, and perform a Principal Components Analysis before feeding the data into the random forest model. 
+
+```{r rf3}
+set.seed(17)
+# train the model 
+modelrf3 <- train(
+  # formula
+  saleprice ~ .,
+  # data
+  training,
+  # fast random forest
+  method = "ranger",
+  # grid search for optimal number of columns to randomly sample at each split
+  tuneGrid = data.frame(mtry = seq(1, 10, 1)),
+  # preProcess
+  preProcess = c("nzv", "center", "scale", "pca"),
+  # set trainCrol as our custom object
+  trControl = myControl
+)
+# print the model summary
+print(modelrf3)
+# print results from the model
+print(min(modelrf3$results$RMSE))
+# plot
+plot(modelrf3)
+```
+
+The third random forest model resulted in the worst model so far. Next, we ran a similar model but removed all zero variance predictors before normalizing and running PCA instead of near-zero variance predictors to see if this made a difference. 
+
+## Elastic Net Regularization
+
+*Add a chunk here about what this means.* 
+
+```{r enet1}
+set.seed(500)
+# Train glmnet with custom trainControl and tuning: model
+enet1 <- train(
+  # formula
+  saleprice ~ ., 
+  # data
+  training,
+  # set grid search parameters for alpha and lambda
+  tuneGrid = expand.grid(alpha = seq(0,1,0.1), 
+                         lambda = seq(0.0001, 1, 10)),
+  # use glmnet method for lasso, ridge, and elastic net 
+  method = "glmnet",
+  # trainControl
+  trControl = myControl
+)
+# Print model to console
+print(enet1)
+# plot RMSE vs alpha
+plot(enet1)
+# Print minimum RMSE
+print(min(enet1$results$RMSE))
+```
+
+Elastic net Regularization produces the best model yet. Our grid search tells us that regardless of our regularization parameter (lambda), a mixing percentage (alpha) of 0.3 is optimal. Now we run another elastic net but with alpha fixed to 0.3 and run a grid search on lambda. 
+
+```{r enet2}
+set.seed(1267)
+# Train glmnet with custom trainControl and tuning: model
+enet2 <- train(
+  # formula
+  saleprice ~ ., 
+  # data
+  training,
+  # set grid search parameters for alpha and lambda
+  tuneGrid = expand.grid(alpha = 1, 
+                         lambda = (0:15) * 1000),
+  # use glmnet method for lasso, ridge, and elastic net 
+  method = "glmnet",
+  # trainControl
+  trControl = myControl
+)
+# Print model to console
+print(enet2)
+# plot RMSE vs alpha
+plot(enet2)
+# Print minimum RMSE
+print(min(enet2$results$RMSE))
+```
+
+Our grid search show that a lambda of 7000 minimizes the RMSE of our model. By finding the optimal lambda, we were able to decrease our RMSE again.  
+
+# Complex Models
+
+```{r knn}
+set.seed(579)
+# Train glmnet with custom trainControl and tuning: model
+knn1 <- train(
+  # formula
+  saleprice ~ ., 
+  # data
+  training,
+  # set grid search parameters for alpha and lambda
+  # use glmnet method for lasso, ridge, and elastic net 
+  method = "kknn",
+  # trainControl
+  trControl = myControl
+)
+# Print model to console
+print(knn1)
+# plot RMSE vs alpha
+plot(knn1)
+# Print minimum RMSE
+print(min(knn1$results$RMSE))
+```
+
+```{r glmboost}
+glmBoostGrid1 = expand.grid(mstop = seq(10, 150, 10),
+                           prune = c("no"))
+set.seed(1254)
+# Train glmnet with custom trainControl and tuning: model
+glmboost1 <- train(
+  # formula
+  saleprice ~ ., 
+  # data
+  training,
+  tuneGrid = glmBoostGrid1,
+  # set grid search parameters for alpha and lambda
+  # use glmnet method for lasso, ridge, and elastic net 
+  method = "glmboost",
+  # trainControl
+  trControl = myControl
+)
+# Print model to console
+print(glmboost1)
+# plot RMSE vs alpha
+plot(glmboost1)
+# Print minimum RMSE
+print(min(glmboost1$results$RMSE))
+```
+
+
+# Model Evaluation
+
+```{r}
+# Create model_list
+model_list <- list(rf1= modelrf1, rf2 = modelrf2, rf3 = modelrf3, `elastic net` = enet1, 
+                   ridge = ridge, 
+                   knn = knn1, glmboost = glmboost1)
+# Pass model_list to resamples(): resamples
+resamples <- resamples(model_list)
+# Summarize the results
+summary(resamples)
+# plot the box and whisker plots for the models
+bwplot(resamples, metric = "RMSE")
+dotplot(resamples, metric = "RMSE")
+```
+
+Based on the combination of lowest RMSE and highest $R^2$, it seems both elastic net regularization models fit the data best. 
+
+# Testing 
+
+```{r test}
+p <- predict(modelrf1, test_x)
+error <- p - test$saleprice
+RMSE_rf1 <- sqrt(mean(error^2))
+RMSE_rf1
+
+p2 <- predict(modelrf2, test_x)
+error2 <- p2 - test$saleprice
+RMSE_rf2 <- sqrt(mean(error2^2))
+RMSE_rf2
+
+p3 <- predict(enet2, test_x)
+error3 <- p3 - test$saleprice
+RMSE3_lasso2 <- sqrt(mean(error3^2))
+RMSE3_lasso2
+
+p4 <- predict(enet1, test_x)
+error4 <- p4 - test$saleprice
+RMSE_lasso1 <- sqrt(mean(error4^2))
+RMSE_lasso1
+
+p5 <- predict(modelrf4, test_x)
+error5 <- p5 - test$saleprice
+RMSE_rf4 <- sqrt(mean(error5^2))
+RMSE_rf4
+
+p6 <- predict(glmboost1, test_x)
+error6 <- p6 - test$saleprice
+RMSE_glmboost <- sqrt(mean(error6^2))
+RMSE_glmboost
+
+p7 <- predict(knn1, test_x)
+error7 <- p7 - test$saleprice
+RMSE_knn <- sqrt(mean(error7^2))
+RMSE_knn
+```
+
+
+
